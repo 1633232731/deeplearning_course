@@ -88,3 +88,29 @@ class Transformer(nn.Module):
             return loss, logits
         else:
             return logits
+
+
+class LawFormer(nn.Module):
+    def __init__(self, device, num_classes=None):
+        super(LawFormer, self).__init__()
+
+        # config
+        self.hidden_size = 200
+        self.embed_size = 200
+        self.max_sent_len = 500
+
+        self.linear = nn.Linear(self.embed_size, num_classes)
+
+        self.CE_loss = nn.CrossEntropyLoss()
+
+    def forward(self, fact, labels=None):
+
+        # 用test.py 代码插到这里，把维度对齐，然后出来接一个LSTM或者接一个Transformer
+
+        logits = self.linear(out)
+
+        if labels is not None:
+            loss = self.CE_loss(logits, labels)
+            return loss, logits
+        else:
+            return logits

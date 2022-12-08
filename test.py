@@ -5,3 +5,4 @@ inputs = tokenizer("任某提起诉讼，请求判令解除婚姻关系并对夫
 outputs = model(**inputs)
 
 print(outputs)
+

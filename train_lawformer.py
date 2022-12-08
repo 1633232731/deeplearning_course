@@ -4,13 +4,13 @@ nohup python -u train.py --model_type=TextRNN --gpu_id=0 --dataset_type=CAIL2018
 nohup python -u train.py --model_type=Transformer --gpu_id=3 --dataset_type=CAIL2018 -s=./checkpoints/CAIL2018_Transformer.pth > logs/CAIL2018_Transformer.log &
 
 nohup python -u train.py --model_type=LSTM --gpu_id=0 --dataset_type=CAIL2018 -s=./checkpoints/CAIL2018_LSTM.pth -log=logs/CAIL2018_LSTM.log &
-
-
-
 '''
 
-from utils import get_precision_recall_f1, evaluate, WordTokenizer, load_vectors, get_embedding_matrix, set_random_seed
-from model import Transformer, LSTM
+from sklearn import metrics
+from sklearn.metrics import accuracy_score
+
+from utils import set_random_seed
+from model import LawFormer
 from dataset import WordCaseData
 import argparse
 import os
@@ -20,6 +20,40 @@ import torch
 from torch.utils.data import DataLoader
 from transformers import AdamW
 import numpy as np
+
+# pd.set_option('display.max_columns', None)
+def evaluate(valid_dataloader, model, device):
+    model.eval()
+    all_predictions = []
+    all_labels = []
+    for i, data in enumerate(valid_dataloader):
+        facts, labels = data
+
+        # move data to device
+        labels = torch.from_numpy(np.array(labels)).to(device)
+
+        with torch.no_grad():
+            # forward
+            logits = model(facts)
+
+        all_predictions.append(logits.softmax(dim=1).detach().cpu())
+        all_labels.append(labels.cpu())
+
+    all_predictions = torch.cat(all_predictions, dim=0).numpy()
+    all_labels = torch.cat(all_labels, dim=0).numpy()
+
+    accuracy, p_macro, r_macro, f1_macro = get_precision_recall_f1(all_labels, np.argmax(all_predictions, axis=1),
+                                                                   'macro')
+    return accuracy, p_macro, r_macro, f1_macro
+
+def get_precision_recall_f1(y_true: np.array, y_pred: np.array, average='micro'):
+    precision = metrics.precision_score(
+        y_true, y_pred, average=average, zero_division=0)
+    recall = metrics.recall_score(
+        y_true, y_pred, average=average, zero_division=0)
+    f1 = metrics.f1_score(y_true, y_pred, average=average, zero_division=0)
+    accuracy = accuracy_score(y_true, y_pred)
+    return accuracy, precision, recall, f1
 
 if __name__ == "__main__":
 
@@ -41,12 +75,12 @@ if __name__ == "__main__":
     parser.add_argument('--resume_checkpoint_path', '-c', type=str, default='./checkpoints/model_baseline_best.pth')
     args = parser.parse_args()
 
-    args.model_type = 'LSTM'
+    args.model_type = 'LawFormer'
     args.log_file_name = 'logs/CAIL2018/logs/{}.log'.format(args.model_type)
     args.save_path = 'logs/CAIL2018/checkpoints/{}.pth'.format(args.model_type)
     args.resume_checkpoint_path = args.save_path
     args.gpu_id = '0'
-    args.num_classes = 149
+    args.num_classes = 119
 
     logging.basicConfig(filename=args.log_file_name,
                         level=logging.INFO,
@@ -63,9 +97,9 @@ if __name__ == "__main__":
     set_random_seed(args.random_seed)
 
     # prepare training data
-    train_path = 'datasets/CAIL2018/CAIL2018_process_train.json'
-    valid_path = 'datasets/CAIL2018/CAIL2018_process_valid.json'
-    test_path = 'datasets/CAIL2018/CAIL2018_process_test.json'
+    train_path = 'datasets/CAIL2018/CAIL2018_train.json'
+    valid_path = 'datasets/CAIL2018/CAIL2018_valid.json'
+    test_path = 'datasets/CAIL2018/CAIL2018_test.json'
 
     logging.info(f'Train_path: {train_path}')
     logging.info(f'Valid_path: {valid_path}')
@@ -85,21 +119,9 @@ if __name__ == "__main__":
 
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-    # load the tokenizer
-    tokenizer = WordTokenizer(data_type=args.dataset_type, max_length=args.input_max_length)
-    word2id = tokenizer.get_word2id()
-
-    logging.info('Load word embedding...')
-    word_embedding = load_vectors(fname=args.word_embed_path)
-
-    embedding_matrix = get_embedding_matrix(word_embedding=word_embedding, word2id=word2id, victor_size=200)
-
     # load the model
-    if args.model_type == 'LSTM':
-        model = LSTM(device, embeddings_matrix=torch.from_numpy(embedding_matrix), num_classes=args.num_classes)
-
-    elif args.model_type == 'Transformer':
-        model = Transformer(device, embeddings_matrix=torch.from_numpy(embedding_matrix), num_classes=args.num_classes)
+    if args.model_type == 'LawFormer':
+        model = LawFormer(device, num_classes=args.num_classes)
     else:
         raise NameError
 
@@ -134,15 +156,8 @@ if __name__ == "__main__":
         for i, data in enumerate(train_dataloader):
             facts, labels = data
 
-            # tokenize the data text
-            inputs_id, inputs_seq_lens = tokenizer.tokenize_seq(list(facts))
-            inputs_id = inputs_id.to(device)
-
-            # move data to device
-            labels = torch.from_numpy(np.array(labels)).to(device)
-
             # forward and backward propagations
-            loss, logits = model(inputs_id, inputs_seq_lens, labels)
+            loss, logits = model(facts, labels)
 
             optimizer.zero_grad()
             loss.backward()
@@ -164,8 +179,7 @@ if __name__ == "__main__":
 
         if (epoch + 1) % 1 == 0:
             logging.info('Evaluating the model on validation set...')
-            accuracy_accu, p_macro_accu, r_macro_accu, f1_macro_accu = evaluate(valid_dataloader, model, tokenizer,
-                                                                                device, args, tokenizer_mode='word')
+            accuracy_accu, p_macro_accu, r_macro_accu, f1_macro_accu = evaluate(valid_dataloader, model,device)
             logging.info(
                 f'valid accusation macro accuracy:{accuracy_accu:.4f} precision:{p_macro_accu:.4f}, recall:{r_macro_accu:.4f}, f1_score:{f1_macro_accu:.4f}')
             # scheduler.step(f1_macro_accu)
@@ -187,7 +201,6 @@ if __name__ == "__main__":
     logging.info('Load best checkpoint for testing model.')
     checkpoint = torch.load(args.save_path, map_location=device)
     model.load_state_dict(checkpoint['state_dict'])
-    accuracy_accu, p_macro_accu, r_macro_accu, f1_macro_accu = evaluate(test_dataloader, model, tokenizer, device, args,
-                                                                        tokenizer_mode='word')
+    accuracy_accu, p_macro_accu, r_macro_accu, f1_macro_accu = evaluate(test_dataloader, model, device)
     logging.info(
         f'test accusation macro accuracy:{accuracy_accu:.4f} precision:{p_macro_accu:.4f}, recall:{r_macro_accu:.4f}, f1_score:{f1_macro_accu:.4f}')
