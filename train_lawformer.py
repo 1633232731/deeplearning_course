@@ -97,9 +97,9 @@ if __name__ == "__main__":
     set_random_seed(args.random_seed)
 
     # prepare training data
-    train_path = 'datasets/CAIL2018/CAIL2018_train.json'
-    valid_path = 'datasets/CAIL2018/CAIL2018_valid.json'
-    test_path = 'datasets/CAIL2018/CAIL2018_test.json'
+    train_path = 'datasets/CAIL2018/CAIL2018_lawformer_train.json'
+    valid_path = 'datasets/CAIL2018/CAIL2018_lawformer_valid.json'
+    test_path = 'datasets/CAIL2018/CAIL2018_lawformer_test.json'
 
     logging.info(f'Train_path: {train_path}')
     logging.info(f'Valid_path: {valid_path}')
